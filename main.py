@@ -1,86 +1,101 @@
 import streamlit as st 
-import yfinance as yf 
 import pandas as pd 
 import numpy as np 
-from datetime import timedelta 
+import matplotlib.pyplot as plt 
 
-# 页面设置 
-st.set_page_config( 
-    page_title="Bi-LSTM vs Transformer 股市预测对比", 
-    page_icon="📊", 
-    layout="wide" 
-) 
-st.title("📊 Bi-LSTM vs Transformer 股市预测对比（可公开分享）") 
+from sklearn.model_selection import train_test_split 
+from sklearn.linear_model import LogisticRegression 
+from sklearn.ensemble import RandomForestClassifier 
+from sklearn.metrics import accuracy_score, classification_report 
 
-# 侧边栏设置 
-with st.sidebar: 
-    st.header("⚙️ 查询与预测设置") 
-    ticker = st.text_input("股票代码", value="AAPL", placeholder="例：AAPL、TSLA、000001.SS") 
-    start_date = st.date_input("历史数据开始日期", value=pd.to_datetime("2020-01-01")) 
-    end_date = st.date_input("历史数据结束日期", value=pd.to_datetime("2026-03-08")) 
-    predict_days = st.slider("预测未来天数", min_value=1, max_value=10, value=5) 
+# ---------------------- 
+# 页面配置 
+# ---------------------- 
+st.set_page_config(page_title="双模型训练演示", layout="wide") 
+st.title("📊 双模型训练系统（Logistic + RandomForest）") 
 
-# 核心函数：获取数据（增加空数据判断） 
-@st.cache_data 
-def get_data(ticker, start, end): 
-    data = yf.download(ticker, start=start, end=end, progress=False) 
-    if data.empty: 
-        raise ValueError(f"未获取到 {ticker} 的数据，请检查代码或日期") 
-    return data[["Close"]].dropna() 
+# ---------------------- 
+# 1. 数据准备 
+# ---------------------- 
+st.subheader("1. 数据加载") 
 
-# 核心函数：模拟两个模型的预测（无TensorFlow依赖） 
-def simulate_model_comparison(last_close, days): 
-    # Bi-LSTM：平稳预测，波动小 
-    lstm_preds = np.linspace(last_close, last_close * 1.02, days) 
-    # Transformer：激进预测，波动大 
-    trans_preds = np.linspace(last_close, last_close * 1.04, days) + np.random.normal(0, 0.5, days) 
-    return lstm_preds, trans_preds 
+data_option = st.radio("数据来源", ["生成模拟数据", "上传CSV文件"]) 
+df = None 
 
-# 核心函数：模型性能指标（模拟历史拟合） 
-def get_performance_metrics(): 
-    return pd.DataFrame({ 
-        "评估指标": ["MSE", "RMSE", "MAE"], 
-        "Bi-LSTM": [0.85, 0.92, 0.78], 
-        "Transformer": [1.23, 1.11, 1.05], 
-        "更优模型": ["Bi-LSTM", "Bi-LSTM", "Bi-LSTM"] 
-    }) 
+if data_option == "生成模拟数据": 
+    st.info("生成二分类模拟数据") 
+    n_samples = st.slider("样本数量", 500, 5000, 1000) 
+    X = np.random.randn(n_samples, 10) 
+    y = np.random.randint(0, 2, size=n_samples) 
+    df = pd.DataFrame(X) 
+    df["target"] = y 
+    st.dataframe(df.head(5)) 
 
-# 主逻辑（增加异常捕获） 
-try: 
-    # 1. 获取数据 
-    data = get_data(ticker, start_date, end_date) 
-    last_close = data["Close"].iloc[-1] 
+else: 
+    uploaded = st.file_uploader("上传CSV（最后一列是标签）", type="csv") 
+    if uploaded: 
+        df = pd.read_csv(uploaded) 
+        st.dataframe(df.head(5)) 
 
-    # 2. 模拟预测 
-    future_dates = pd.date_range(start=end_date, periods=predict_days, freq="B") 
-    lstm_preds, trans_preds = simulate_model_comparison(last_close, predict_days) 
+# ---------------------- 
+# 2. 训练准备 
+# ---------------------- 
+if df is not None: 
+    st.subheader("2. 训练设置") 
 
-    # 3. 构建结果 DataFrame 
-    future_df = pd.DataFrame({ 
-        "Bi-LSTM 预测": lstm_preds.round(2), 
-        "Transformer 预测": trans_preds.round(2) 
-    }, index=future_dates) 
+    test_size = st.slider("测试集比例", 0.1, 0.5, 0.2) 
+    random_state = st.number_input("随机种子", value=42) 
 
-    # 4. 展示结果（两栏布局） 
-    col1, col2 = st.columns(2) 
+    # 划分 X y 
+    X = df.iloc[:, :-1] 
+    y = df.iloc[:, -1] 
 
-    with col1: 
-        st.subheader(f"📈 {ticker} 历史收盘价走势") 
-        st.line_chart(data["Close"], use_container_width=True) 
-        st.subheader("📊 历史数据统计摘要") 
-        st.dataframe(data.describe().round(2), use_container_width=True) 
+    X_train, X_test, y_train, y_test = train_test_split( 
+        X, y, test_size=test_size, random_state=random_state 
+    ) 
 
-    with col2: 
-        st.subheader(f"🔮 未来 {predict_days} 天预测对比") 
-        st.line_chart(future_df, use_container_width=True) 
-        st.subheader("⚠️ 模型性能对比") 
-        st.dataframe(get_performance_metrics(), use_container_width=True, hide_index=True) 
+    st.write(f"训练集: {X_train.shape[0]} 条") 
+    st.write(f"测试集: {X_test.shape[0]} 条") 
 
-    # 核心结论 
-    st.subheader("✅ 核心结论") 
-    st.success("在当前模拟场景下，**Bi-LSTM 模型**的综合预测误差更小，表现更优！") 
-    st.info("注：此应用为演示工具，预测结果基于模拟数据，不构成投资建议。") 
+    # ---------------------- 
+    # 3. 训练两个模型 
+    # ---------------------- 
+    st.subheader("3. 开始训练") 
+    if st.button("🚀 训练 Logistic + RandomForest"): 
 
-except Exception as e: 
-    st.error(f"❌ 操作失败：{str(e)}") 
-    st.info("提示：请检查股票代码是否正确，如A股需加后缀（例：000001.SS），或调整日期范围。")
+        with st.spinner("训练中..."): 
+            # 模型1 
+            lr = LogisticRegression(max_iter=1000) 
+            lr.fit(X_train, y_train) 
+            y_pred_lr = lr.predict(X_test) 
+            acc_lr = accuracy_score(y_test, y_pred_lr) 
+
+            # 模型2 
+            rf = RandomForestClassifier(n_estimators=100, random_state=random_state) 
+            rf.fit(X_train, y_train) 
+            y_pred_rf = rf.predict(X_test) 
+            acc_rf = accuracy_score(y_test, y_pred_rf) 
+
+        # 展示结果 
+        st.success("训练完成！") 
+        col1, col2 = st.columns(2) 
+        with col1: 
+            st.metric("Logistic Regression 准确率", f"{acc_lr:.2%}") 
+            st.text(classification_report(y_test, y_pred_lr)) 
+        with col2: 
+            st.metric("Random Forest 准确率", f"{acc_rf:.2%}") 
+            st.text(classification_report(y_test, y_pred_rf)) 
+
+        # 画对比图 
+        st.subheader("4. 模型对比图") 
+        models = ["Logistic", "RandomForest"] 
+        accs = [acc_lr, acc_rf] 
+        fig, ax = plt.subplots() 
+        ax.bar(models, accs, color=["#1f77b4", "#ff7f0e"]) 
+        ax.set_ylim(0, 1) 
+        ax.set_ylabel("准确率") 
+        ax.set_title("双模型表现对比") 
+        st.pyplot(fig) 
+
+else: 
+    st.warning("请先加载数据")
